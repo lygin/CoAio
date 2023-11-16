@@ -8,6 +8,11 @@
 const int N = 4096;
 const int BATCH_SIZE = 10'0000;
 
+void done(void* arg) {
+    WaitGroup* wg = (WaitGroup*)arg;
+    wg->Done();
+}
+
 int main()
 {
     Corot::Sche *sche = new Corot::Sche(8);
@@ -39,7 +44,8 @@ int main()
         t[i].buf = buf[i];
         t[i].off = i * N;
         t[i].len = N;
-        t[i].wg = &wg;
+        t[i].cb_func = done;
+        t[i].cb_data = &wg;
         sche->submit_aio(&t[i]);
     }
     wg.Wait();
@@ -56,7 +62,8 @@ int main()
         t[i].buf = buf[i];
         t[i].off = (BATCH_SIZE+i) * N;
         t[i].len = N;
-        t[i].wg = &wg2;
+        t[i].cb_func = done;
+        t[i].cb_data = &wg2;
         batch[i] = &t[i];
     }
     tm.Reset();

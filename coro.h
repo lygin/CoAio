@@ -24,6 +24,7 @@ enum AioOP
     READ,
     WRITE
 };
+using AioCbFunc = std::function<void(void*)>;
 struct AioTask
 {
     AioOP op;
@@ -31,7 +32,8 @@ struct AioTask
     void *buf;
     size_t off;
     size_t len;
-    WaitGroup *wg;
+    AioCbFunc cb_func;
+    void *cb_data;
 };
 
 typedef void *fctx_t;
@@ -154,7 +156,8 @@ namespace Corot
         struct AioCbData
         {
             Coro *coro;
-            WaitGroup *wg;
+            AioCbFunc cb_func;
+            void* cb_data;
         };
         explicit Sche(int coro_num) : Coro(this), coro_num_(coro_num)
         {
@@ -198,9 +201,10 @@ namespace Corot
                 struct iocb *completed_iocb = events[i].obj;
                 // Process the completed I/O operation here
                 AioCbData *cbdata = (AioCbData *)completed_iocb->data;
-                WaitGroup *wg = cbdata->wg;
+                AioCbFunc cb_func = cbdata->cb_func;
+                void *cb_data = cbdata->cb_data;
+                cb_func(cb_data);
                 Coro *coro = cbdata->coro;
-                wg->Done();
                 if (coro->state_ == State::Wait) {
                     coro->state_ = State::Ready;
                     ready_list_.emplace_back(coro);
@@ -217,7 +221,8 @@ namespace Corot
                 struct iocb *cb = (struct iocb *)calloc(1, sizeof(struct iocb));
                 AioCbData *cb_data = new AioCbData;
                 cb_data->coro = current_;
-                cb_data->wg = task->wg;
+                cb_data->cb_func = task->cb_func;
+                cb_data->cb_data = task->cb_data;
                 if (task->op == WRITE) {
                     io_prep_pwrite(cb, task->fd, task->buf, task->len, task->off);
                 } else {
@@ -248,7 +253,8 @@ namespace Corot
                     }
                     AioCbData *cb_data = new AioCbData;
                     cb_data->coro = current_;
-                    cb_data->wg = task[i]->wg;;
+                    cb_data->cb_func = task[i]->cb_func;
+                    cb_data->cb_data = task[i]->cb_data;
                     cb[i].data = cb_data;
                     cbs[i] = &cb[i];
                 }
