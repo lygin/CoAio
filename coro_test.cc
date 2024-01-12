@@ -70,7 +70,7 @@ int main()
     sche->submit_aio_batch(batch, batch_cnt);
     wg2.Wait();
     elapsed = tm.GetDurationMs();
-    printf("insert IOPS: %.2fKops\n avg latency: %.2fus\n", batch_cnt * 1.0 / elapsed, elapsed * 1024 / batch_cnt);
+    printf("batch insert IOPS: %.2fKops\n avg latency: %.2fus\n", batch_cnt * 1.0 / elapsed, elapsed * 1024 / batch_cnt);
 
     coro_run(sche, [&fd]{
         char *bufr;

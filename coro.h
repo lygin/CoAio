@@ -50,7 +50,7 @@ extern "C"
 }
 
 void co_wait();
-void co_yield ();
+void co_yield();
 
 namespace Corot
 {
@@ -80,6 +80,7 @@ namespace Corot
                 stack_base_ = malloc(kCoroStackSize);
                 stack_size_ = kCoroStackSize;
                 // 构造协程的栈空间，返回协程的上下文地址（以后只要jump到这个上下文地址，就能切换协程）
+                // stack地址由高到低
                 fctx_ = make_fcontext(stack_base_ + stack_size_, stack_size_, &Coro::enter);
             }
             ~StackCtx() { free(stack_base_); }
@@ -156,8 +157,7 @@ namespace Corot
         struct AioCbData
         {
             Coro *coro;
-            AioCbFunc cb_func;
-            void* cb_data;
+            int wait_count;
         };
         explicit Sche(int coro_num) : Coro(this), coro_num_(coro_num)
         {
@@ -201,13 +201,12 @@ namespace Corot
                 struct iocb *completed_iocb = events[i].obj;
                 // Process the completed I/O operation here
                 AioCbData *cbdata = (AioCbData *)completed_iocb->data;
-                AioCbFunc cb_func = cbdata->cb_func;
-                void *cb_data = cbdata->cb_data;
-                cb_func(cb_data);
                 Coro *coro = cbdata->coro;
-                if (coro->state_ == State::Wait) {
+                cbdata->wait_count--;
+                if (coro->state_ == State::Wait && cbdata->wait_count == 0) {
                     coro->state_ = State::Ready;
                     ready_list_.emplace_back(coro);
+                    assert(ready_list_.size() <= coro_num_);
                 }
             }
         }
@@ -221,8 +220,7 @@ namespace Corot
                 struct iocb *cb = (struct iocb *)calloc(1, sizeof(struct iocb));
                 AioCbData *cb_data = new AioCbData;
                 cb_data->coro = current_;
-                cb_data->cb_func = task->cb_func;
-                cb_data->cb_data = task->cb_data;
+                cb_data->wait_count = 1;
                 if (task->op == WRITE) {
                     io_prep_pwrite(cb, task->fd, task->buf, task->len, task->off);
                 } else {
@@ -235,6 +233,7 @@ namespace Corot
                 //等待io完成
                 current_->wait();
                 // do some other things until io done
+                task->cb_func(task->cb_data);
             },aiotask)
             );
         }
@@ -244,6 +243,9 @@ namespace Corot
             addTask(std::bind([&](AioTask **task, uint32_t count){
                 struct iocb *cb = (struct iocb *)calloc(count, sizeof(struct iocb));
                 struct iocb **cbs = (struct iocb **)calloc(count, sizeof(struct iocb*));
+                AioCbData *cb_data = new AioCbData;
+                cb_data->coro = current_;
+                cb_data->wait_count =count;
 
                 for(int i=0; i<count; ++i) {
                     if(task[i]->op == READ) {
@@ -251,10 +253,6 @@ namespace Corot
                     } else {
                         io_prep_pwrite(&cb[i], task[i]->fd, task[i]->buf, task[i]->len, task[i]->off);
                     }
-                    AioCbData *cb_data = new AioCbData;
-                    cb_data->coro = current_;
-                    cb_data->cb_func = task[i]->cb_func;
-                    cb_data->cb_data = task[i]->cb_data;
                     cb[i].data = cb_data;
                     cbs[i] = &cb[i];
                 }
@@ -262,6 +260,11 @@ namespace Corot
                 while(ret < count) {
                     assert(ret >= 0);
                     ret += io_submit(aioctx_, count, cbs);
+                }
+                current_->wait();
+                // do some other things until io done
+                for(int i=0; i<count; ++i) {
+                    task[i]->cb_func(task[i]->cb_data);
                 }
             },aiotask, count)
             );
