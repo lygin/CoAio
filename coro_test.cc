@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include "timer.h"
+#include "waitgroup.h"
 const int N = 4096;
 const int BATCH_SIZE = 10'0000;
 

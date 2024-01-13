@@ -11,7 +11,6 @@
 #include <cstdio>
 #include <sched.h>
 #include <libaio.h>
-#include "waitgroup.h"
 
 #include "concurrentqueue.h"
 
@@ -46,7 +45,7 @@ extern "C"
 {
     filectx jump_fcontext(fctx_t to_ctx, void *to_coro_ptr);
     // jump_fcontext会走到enter函数，其中from为原来coro上下文
-    fctx_t make_fcontext(void *sp, size_t size, void (*enter)(filectx from));
+    fctx_t make_fcontext(void *sp, size_t size, void (*ent_func)(filectx from));
 }
 
 void co_wait();
@@ -81,7 +80,7 @@ namespace Corot
                 stack_size_ = kCoroStackSize;
                 // 构造协程的栈空间，返回协程的上下文地址（以后只要jump到这个上下文地址，就能切换协程）
                 // stack地址由高到低
-                fctx_ = make_fcontext(stack_base_ + stack_size_, stack_size_, &Coro::enter);
+                fctx_ = make_fcontext(stack_base_ + stack_size_, stack_size_, &Coro::coro_func);
             }
             ~StackCtx() { free(stack_base_); }
             void *sp() { return stack_base_ + stack_size_; }
@@ -113,7 +112,7 @@ namespace Corot
         void resume() { switch_coro(this); }
 
      private:
-        static void enter(filectx from)
+        static void coro_func(filectx from)
         {
             Coro *coro = reinterpret_cast<Coro *>(from.coro);
             Coro *sche = (Coro *)coro->sche_;
@@ -123,10 +122,11 @@ namespace Corot
 
         void switch_coro(Coro *to)
         {
-            // 保存寄存器(rbp,rsp,...)到栈中，将需要恢复的协程to的上下文恢复到寄存器中，开始执行to
+            // 保存寄存器(rbp,rsp,...)到栈中，将需要恢复的协程to的上下文恢复到寄存器中，开始执行to(100ns)
             // 返回to协程切换后的上下文状态(to_fctx)
             filectx t = jump_fcontext(to->ctx_.fctx(), to);
-            // boost每次切换都会更新context的地址，因此每次切换jump都必须重新更新context
+            // boost每次切换都会更新context的地址（切换栈就是切换context），因此每次切换jump都必须重新更新context
+            // 在to里面switch_coro(sche_)会走到这，因为sche->ctx_.set_fctx(from.fctx);from.fctx就是这
             to->ctx_.set_fctx(t.fctx);
         }
 
